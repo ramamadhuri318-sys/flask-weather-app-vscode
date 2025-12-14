@@ -1,27 +1,62 @@
-name: CI/CD – Flask App
+name: CI/CD to EC2 (Docker)
 
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
 
 jobs:
-  build-test:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Set up SSH key
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+          chmod 600 ~/.ssh/ec2_key.pem
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Basic syntax check
-        run: python -m compileall .
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/ec2_key.pem "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+          "APP_DIR='${{ secrets.EC2_APP_DIR }}' REPO_URL='https://github.com/${{ github.repository }}.git' OPENWEATHER_API_KEY='${{ secrets.OPENWEATHER_API_KEY }}' bash -s" <<'EOF'
+            set -e
+
+            echo "==> Preparing app directory..."
+            if [ ! -d "$APP_DIR/.git" ]; then
+              mkdir -p "$APP_DIR"
+              git clone "$REPO_URL" "$APP_DIR"
+            fi
+
+            cd "$APP_DIR"
+
+            echo "==> Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "==> Installing Docker (if needed)..."
+            sudo dnf install -y docker git >/dev/null 2>&1 || true
+            sudo systemctl enable --now docker
+
+            echo "==> Stopping Apache if running (port 80 conflict)..."
+            sudo systemctl stop httpd >/dev/null 2>&1 || true
+
+            echo "==> Building Docker image..."
+            sudo docker build -t flask-weather-app:latest .
+
+            echo "==> Stopping old container (if exists)..."
+            sudo docker rm -f flask-weather-app >/dev/null 2>&1 || true
+
+            echo "==> Starting new container..."
+            sudo docker run -d --name flask-weather-app \
+              --restart unless-stopped \
+              -p 80:8000 \
+              -e OPENWEATHER_API_KEY="$OPENWEATHER_API_KEY" \
+              flask-weather-app:latest
+
+            echo "==> Done. App should be live on http://$(${SHELL:-/bin/bash} -lc 'hostname -I | awk "{print \$1}"' 2>/dev/null || echo 'EC2_PUBLIC_IP')"
+          EOF
+
