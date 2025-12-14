@@ -23,10 +23,11 @@ def index():
             try:
                 url = "https://api.openweathermap.org/data/2.5/weather"
                 params = {"q": city, "appid": OPENWEATHER_API_KEY, "units": "metric"}
-                resp = requests.get(url, params=params, timeout=5)
-                data = resp.json()
 
-                if resp.status_code != 200:
+                response = requests.get(url, params=params, timeout=5)
+                data = response.json()
+
+                if response.status_code != 200:
                     error_message = data.get("message", "Could not fetch weather.")
                 else:
                     weather_data = {
@@ -44,4 +45,5 @@ def index():
 
 
 if __name__ == "__main__":
+    # Local dev only; in Docker we'll use gunicorn
     app.run(host="0.0.0.0", port=8000, debug=False)
