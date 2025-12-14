@@ -4,7 +4,6 @@ from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-# Read from environment (EC2/GitHub Actions/Docker)
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 
@@ -23,26 +22,21 @@ def index():
         else:
             try:
                 url = "https://api.openweathermap.org/data/2.5/weather"
-                params = {
-                    "q": city,
-                    "appid": OPENWEATHER_API_KEY,
-                    "units": "metric",
-                }
-                response = requests.get(url, params=params, timeout=5)
-                data = response.json()
+                params = {"q": city, "appid": OPENWEATHER_API_KEY, "units": "metric"}
+                resp = requests.get(url, params=params, timeout=5)
+                data = resp.json()
 
-                if response.status_code != 200:
+                if resp.status_code != 200:
                     error_message = data.get("message", "Could not fetch weather.")
                 else:
                     weather_data = {
-                        "city": data.get("name"),
-                        "country": data.get("sys", {}).get("country"),
-                        "temperature": data.get("main", {}).get("temp"),
-                        "feels_like": data.get("main", {}).get("feels_like"),
-                        "humidity": data.get("main", {}).get("humidity"),
-                        "description": (data.get("weather") or [{}])[0].get("description", "").title(),
+                        "city": data["name"],
+                        "country": data["sys"]["country"],
+                        "temperature": data["main"]["temp"],
+                        "feels_like": data["main"]["feels_like"],
+                        "humidity": data["main"]["humidity"],
+                        "description": data["weather"][0]["description"].title(),
                     }
-
             except requests.RequestException:
                 error_message = "Network error while contacting weather service."
 
@@ -50,6 +44,4 @@ def index():
 
 
 if __name__ == "__main__":
-    # Local/dev run only. In EC2 production, use gunicorn or Docker.
-    port = int(os.environ.get("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=8000, debug=False)
