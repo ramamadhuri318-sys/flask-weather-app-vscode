@@ -1,3 +1,24 @@
+name: CI/CD to EC2 (Docker)
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+          chmod 600 ~/.ssh/ec2_key.pem
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
       - name: Deploy to EC2
         run: |
           ssh -i ~/.ssh/ec2_key.pem "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" <<EOF
@@ -15,29 +36,29 @@
 
             cd "\$APP_DIR"
 
-            echo "==> Pulling latest code..."
+            echo "==> Pull latest code..."
             git fetch origin main
             git reset --hard origin/main
 
-            echo "==> Installing Docker (if needed)..."
+            echo "==> Install & start Docker..."
             sudo dnf install -y docker git >/dev/null 2>&1 || true
             sudo systemctl enable --now docker
 
-            echo "==> Stopping Apache if running (port 80 conflict)..."
+            echo "==> Stop Apache if running (port 80 conflict)..."
             sudo systemctl stop httpd >/dev/null 2>&1 || true
 
-            echo "==> Building Docker image..."
+            echo "==> Build Docker image..."
             sudo docker build -t flask-weather-app:latest .
 
-            echo "==> Stopping old container (if exists)..."
+            echo "==> Remove old container..."
             sudo docker rm -f flask-weather-app >/dev/null 2>&1 || true
 
-            echo "==> Starting new container..."
+            echo "==> Run new container..."
             sudo docker run -d --name flask-weather-app \
               --restart unless-stopped \
               -p 80:8000 \
               -e OPENWEATHER_API_KEY="\$OPENWEATHER_API_KEY" \
               flask-weather-app:latest
 
-            echo "==> Done. Open: http://${{ secrets.EC2_HOST }}"
+            echo "==> Deployment done. Open: http://${{ secrets.EC2_HOST }}"
 EOF
