@@ -3,6 +3,7 @@ name: CI/CD to EC2 (Docker)
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,53 +13,44 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
-          chmod 600 ~/.ssh/ec2_key.pem
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Deploy to EC2
-        run: |
-          ssh -i ~/.ssh/ec2_key.pem "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" <<EOF
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
             set -e
 
-            APP_DIR="${{ secrets.EC2_APP_DIR }}"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            OPENWEATHER_API_KEY="${{ secrets.OPENWEATHER_API_KEY }}"
+            APP_DIR=/home/ec2-user/flask-weather-app-vscode
+            IMAGE=flask-weather-app:latest
+            CONTAINER=flask-weather-app
+            ENV_FILE=/home/ec2-user/app/weather.env
 
-            echo "==> Preparing app directory..."
-            if [ ! -d "\$APP_DIR/.git" ]; then
-              mkdir -p "\$APP_DIR"
-              git clone "\$REPO_URL" "\$APP_DIR"
+            echo "== Ensure repo exists =="
+            if [ ! -d "$APP_DIR/.git" ]; then
+              rm -rf "$APP_DIR"
+              git clone https://github.com/${{ github.repository }} "$APP_DIR"
             fi
 
-            cd "\$APP_DIR"
-
-            echo "==> Pull latest code..."
-            git fetch origin main
+            cd "$APP_DIR"
+            git fetch --all
             git reset --hard origin/main
 
-            echo "==> Install & start Docker..."
-            sudo dnf install -y docker git >/dev/null 2>&1 || true
-            sudo systemctl enable --now docker
+            echo "== Check env file =="
+            ls -l "$ENV_FILE"
 
-            echo "==> Stop Apache if running (port 80 conflict)..."
-            sudo systemctl stop httpd >/dev/null 2>&1 || true
+            echo "== Build image =="
+            docker build -t "$IMAGE" .
 
-            echo "==> Build Docker image..."
-            sudo docker build -t flask-weather-app:latest .
-
-            echo "==> Remove old container..."
-            sudo docker rm -f flask-weather-app >/dev/null 2>&1 || true
-
-            echo "==> Run new container..."
-            sudo docker run -d --name flask-weather-app \
+            echo "== Restart container =="
+            docker rm -f "$CONTAINER" 2>/dev/null || true
+            docker run -d --name "$CONTAINER" \
               --restart unless-stopped \
               -p 80:8000 \
-              -e OPENWEATHER_API_KEY="\$OPENWEATHER_API_KEY" \
-              flask-weather-app:latest
+              --env-file "$ENV_FILE" \
+              "$IMAGE"
 
-            echo "==> Deployment done. Open: http://${{ secrets.EC2_HOST }}"
-EOF
+            echo "== Status =="
+            docker ps | grep "$CONTAINER"
+            docker logs --tail 50 "$CONTAINER"
